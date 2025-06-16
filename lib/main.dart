@@ -2,14 +2,14 @@ import 'package:flutter/material.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:http/http.dart' as http;
 import 'dart:convert';
+import 'dart:async';
+import 'dart:io';
 
 void main() {
   runApp(MyApp());
 }
 
 class MyApp extends StatelessWidget {
-  const MyApp({super.key});
-
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
@@ -25,8 +25,6 @@ class MyApp extends StatelessWidget {
 }
 
 class AuthWrapper extends StatefulWidget {
-  const AuthWrapper({super.key});
-
   @override
   _AuthWrapperState createState() => _AuthWrapperState();
 }
@@ -53,11 +51,7 @@ class _AuthWrapperState extends State<AuthWrapper> {
   @override
   Widget build(BuildContext context) {
     if (_isLoading) {
-      return Scaffold(
-        body: Center(
-          child: CircularProgressIndicator(),
-        ),
-      );
+      return Scaffold(body: Center(child: CircularProgressIndicator()));
     }
 
     return _isLoggedIn ? HomePage() : LoginPage();
@@ -69,34 +63,82 @@ class AuthService {
   static const String _tokenKey = 'auth_token';
   static const String _nameKey = 'user_name';
 
-  
+  // URL de tu API - cambiar por la URL real
   static const String _baseUrl = 'https://665wx47j-4000.usw3.devtunnels.ms/users';
+
+  // Cliente HTTP personalizado para manejar certificados SSL
+  static http.Client? _httpClient;
+
+  static http.Client get httpClient {
+    if (_httpClient == null) {
+      _httpClient = http.Client();
+
+      // Para desarrollo - SOLO usar en desarrollo, nunca en producción
+      if (_baseUrl.contains('localhost') ||
+          _baseUrl.contains('127.0.0.1') ||
+          _baseUrl.contains('192.168') ||
+          _baseUrl.contains('::1')) {
+        HttpOverrides.global = _DevHttpOverrides();
+      }
+    }
+    return _httpClient!;
+  }
 
   Future<Map<String, dynamic>?> login(String email, String password) async {
     try {
-      final response = await http.post(
-        Uri.parse('$_baseUrl/login'),
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: jsonEncode({
-          'email': email,
-          'password': password,
-        }),
-      );
+      print('Intentando login con: $email');
+      print('URL: $_baseUrl/login');
+
+      final response = await httpClient
+          .post(
+            Uri.parse('$_baseUrl/login'),
+            headers: {
+              'Content-Type': 'application/json',
+              'Accept': 'application/json',
+              // Agregar headers adicionales si tu API los requiere
+              'User-Agent': 'Flutter-App/1.0',
+            },
+            body: jsonEncode({'email': email, 'password': password}),
+          )
+          .timeout(
+            Duration(seconds: 30), // Timeout de 30 segundos
+            onTimeout: () {
+              throw Exception('Timeout: La solicitud tardó demasiado');
+            },
+          );
+
+      print('Status Code: ${response.statusCode}');
+      print('Response Body: ${response.body}');
 
       if (response.statusCode == 200) {
         final data = jsonDecode(response.body);
-        
-        await _storage.write(key: _tokenKey, value: data['token']);
-        await _storage.write(key: _nameKey, value: data['nombre']);
-        
-        return data;
+
+        // Verificar que el JSON tenga la estructura esperada
+        if (data['token'] != null && data['nombre'] != null) {
+          // Guardar token y nombre de forma segura
+          await _storage.write(key: _tokenKey, value: data['token']);
+          await _storage.write(key: _nameKey, value: data['nombre']);
+
+          return data;
+        } else {
+          print('Error: Respuesta no tiene la estructura esperada');
+          return null;
+        }
       } else {
+        print('Error HTTP: ${response.statusCode} - ${response.body}');
         return null;
       }
+    } on SocketException catch (e) {
+      print('Error de conexión: $e');
+      return null;
+    } on HandshakeException catch (e) {
+      print('Error de certificado SSL: $e');
+      return null;
+    } on TimeoutException catch (e) {
+      print('Timeout: $e');
+      return null;
     } catch (e) {
-        print('Error en login: $e');
+      print('Error inesperado en login: $e');
       return null;
     }
   }
@@ -118,11 +160,29 @@ class AuthService {
     final token = await getToken();
     return token != null;
   }
+
+  static void dispose() {
+    _httpClient?.close();
+    _httpClient = null;
+  }
+}
+
+// Clase para manejar certificados SSL en desarrollo
+// ADVERTENCIA: Solo usar en desarrollo, nunca en producción
+class _DevHttpOverrides extends HttpOverrides {
+  @override
+  HttpClient createHttpClient(SecurityContext? context) {
+    return super.createHttpClient(context)
+      ..badCertificateCallback = (X509Certificate cert, String host, int port) {
+        // En desarrollo, aceptar todos los certificados
+        // NUNCA hacer esto en producción
+        print('Advertencia: Aceptando certificado no válido para $host:$port');
+        return true;
+      };
+  }
 }
 
 class LoginPage extends StatefulWidget {
-  const LoginPage({super.key});
-
   @override
   _LoginPageState createState() => _LoginPageState();
 }
@@ -132,7 +192,7 @@ class _LoginPageState extends State<LoginPage> {
   final _emailController = TextEditingController();
   final _passwordController = TextEditingController();
   final AuthService _authService = AuthService();
-  
+
   bool _isLoading = false;
   bool _obscurePassword = true;
 
@@ -160,15 +220,18 @@ class _LoginPageState extends State<LoginPage> {
 
       if (result != null) {
         // Login exitoso, navegar a home
-        Navigator.of(context).pushReplacement(
-          MaterialPageRoute(builder: (context) => HomePage()),
-        );
+        Navigator.of(
+          context,
+        ).pushReplacement(MaterialPageRoute(builder: (context) => HomePage()));
       } else {
-        // Mostrar error
+        // Mostrar error más específico
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
-            content: Text('Error: Credenciales incorrectas'),
+            content: Text(
+              'Error de conexión. Verifica tu conexión a internet y que la API esté disponible.',
+            ),
             backgroundColor: Colors.red,
+            duration: Duration(seconds: 4),
           ),
         );
       }
@@ -189,11 +252,7 @@ class _LoginPageState extends State<LoginPage> {
                 mainAxisAlignment: MainAxisAlignment.center,
                 children: [
                   // Logo o título
-                  Icon(
-                    Icons.lock_outline,
-                    size: 80,
-                    color: Colors.blue,
-                  ),
+                  Icon(Icons.lock_outline, size: 80, color: Colors.blue),
                   SizedBox(height: 32),
                   Text(
                     'Iniciar Sesión',
@@ -204,7 +263,7 @@ class _LoginPageState extends State<LoginPage> {
                     ),
                   ),
                   SizedBox(height: 48),
-                  
+
                   // Campo de email
                   TextFormField(
                     controller: _emailController,
@@ -222,14 +281,16 @@ class _LoginPageState extends State<LoginPage> {
                       if (value == null || value.isEmpty) {
                         return 'Por favor ingresa tu correo';
                       }
-                      if (!RegExp(r'^[\w-\.]+@([\w-]+\.)+[\w-]{2,4}$').hasMatch(value)) {
+                      if (!RegExp(
+                        r'^[\w-\.]+@([\w-]+\.)+[\w-]{2,4}$',
+                      ).hasMatch(value)) {
                         return 'Ingresa un correo válido';
                       }
                       return null;
                     },
                   ),
                   SizedBox(height: 16),
-                  
+
                   // Campo de contraseña
                   TextFormField(
                     controller: _passwordController,
@@ -239,7 +300,9 @@ class _LoginPageState extends State<LoginPage> {
                       prefixIcon: Icon(Icons.lock_outlined),
                       suffixIcon: IconButton(
                         icon: Icon(
-                          _obscurePassword ? Icons.visibility : Icons.visibility_off,
+                          _obscurePassword
+                              ? Icons.visibility
+                              : Icons.visibility_off,
                         ),
                         onPressed: () {
                           setState(() {
@@ -264,7 +327,7 @@ class _LoginPageState extends State<LoginPage> {
                     },
                   ),
                   SizedBox(height: 32),
-                  
+
                   // Botón de login
                   SizedBox(
                     width: double.infinity,
@@ -278,17 +341,20 @@ class _LoginPageState extends State<LoginPage> {
                           borderRadius: BorderRadius.circular(12),
                         ),
                       ),
-                      child: _isLoading
-                          ? CircularProgressIndicator(
-                              valueColor: AlwaysStoppedAnimation<Color>(Colors.white),
-                            )
-                          : Text(
-                              'Iniciar Sesión',
-                              style: TextStyle(
-                                fontSize: 16,
-                                fontWeight: FontWeight.bold,
+                      child:
+                          _isLoading
+                              ? CircularProgressIndicator(
+                                valueColor: AlwaysStoppedAnimation<Color>(
+                                  Colors.white,
+                                ),
+                              )
+                              : Text(
+                                'Iniciar Sesión',
+                                style: TextStyle(
+                                  fontSize: 16,
+                                  fontWeight: FontWeight.bold,
+                                ),
                               ),
-                            ),
                     ),
                   ),
                 ],
@@ -302,8 +368,6 @@ class _LoginPageState extends State<LoginPage> {
 }
 
 class HomePage extends StatefulWidget {
-  const HomePage({super.key});
-
   @override
   _HomePageState createState() => _HomePageState();
 }
@@ -322,7 +386,7 @@ class _HomePageState extends State<HomePage> {
   Future<void> _loadUserData() async {
     final name = await _authService.getUserName();
     final token = await _authService.getToken();
-    
+
     setState(() {
       _userName = name ?? 'Usuario';
       _token = token ?? '';
@@ -365,10 +429,7 @@ class _HomePageState extends State<HomePage> {
         backgroundColor: Colors.blue,
         foregroundColor: Colors.white,
         actions: [
-          IconButton(
-            icon: Icon(Icons.logout),
-            onPressed: _handleLogout,
-          ),
+          IconButton(icon: Icon(Icons.logout), onPressed: _handleLogout),
         ],
       ),
       body: Padding(
@@ -398,16 +459,13 @@ class _HomePageState extends State<HomePage> {
                   SizedBox(height: 8),
                   Text(
                     _userName,
-                    style: TextStyle(
-                      fontSize: 18,
-                      color: Colors.grey[700],
-                    ),
+                    style: TextStyle(fontSize: 18, color: Colors.grey[700]),
                   ),
                 ],
               ),
             ),
             SizedBox(height: 24),
-            
+
             Text(
               'Información de sesión:',
               style: TextStyle(
@@ -417,7 +475,7 @@ class _HomePageState extends State<HomePage> {
               ),
             ),
             SizedBox(height: 16),
-            
+
             Container(
               width: double.infinity,
               padding: EdgeInsets.all(16),
@@ -437,7 +495,9 @@ class _HomePageState extends State<HomePage> {
                   ),
                   SizedBox(height: 4),
                   Text(
-                    _token.length > 20 ? '${_token.substring(0, 20)}...' : _token,
+                    _token.length > 20
+                        ? '${_token.substring(0, 20)}...'
+                        : _token,
                     style: TextStyle(
                       fontFamily: 'monospace',
                       color: Colors.grey[600],
@@ -446,9 +506,9 @@ class _HomePageState extends State<HomePage> {
                 ],
               ),
             ),
-            
+
             SizedBox(height: 32),
-            
+
             Center(
               child: ElevatedButton.icon(
                 onPressed: _handleLogout,

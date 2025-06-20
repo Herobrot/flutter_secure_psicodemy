@@ -10,6 +10,8 @@ void main() {
 }
 
 class MyApp extends StatelessWidget {
+  const MyApp({super.key});
+
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
@@ -25,6 +27,8 @@ class MyApp extends StatelessWidget {
 }
 
 class AuthWrapper extends StatefulWidget {
+  const AuthWrapper({super.key});
+
   @override
   _AuthWrapperState createState() => _AuthWrapperState();
 }
@@ -84,7 +88,7 @@ class AuthService {
     return _httpClient!;
   }
 
-  Future<Map<String, dynamic>?> login(String email, String password) async {
+  Future<Map<String?, dynamic>?> login(String email, String password) async {
     try {
       print('Intentando login con: $email');
       print('URL: $_baseUrl/login');
@@ -93,15 +97,12 @@ class AuthService {
           .post(
             Uri.parse('$_baseUrl/login'),
             headers: {
-              'Content-Type': 'application/json',
-              'Accept': 'application/json',
-              // Agregar headers adicionales si tu API los requiere
-              'User-Agent': 'Flutter-App/1.0',
+              'Content-Type': 'application/json'
             },
-            body: jsonEncode({'email': email, 'password': password}),
+            body: jsonEncode({'correo': email, 'password': password}),
           )
           .timeout(
-            Duration(seconds: 30), // Timeout de 30 segundos
+            Duration(seconds: 60), // Timeout de 30 segundos
             onTimeout: () {
               throw Exception('Timeout: La solicitud tardó demasiado');
             },
@@ -113,11 +114,9 @@ class AuthService {
       if (response.statusCode == 200) {
         final data = jsonDecode(response.body);
 
-        // Verificar que el JSON tenga la estructura esperada
-        if (data['token'] != null && data['nombre'] != null) {
-          // Guardar token y nombre de forma segura
+        if (data['token'] != null && data['user'] != null) {        
           await _storage.write(key: _tokenKey, value: data['token']);
-          await _storage.write(key: _nameKey, value: data['nombre']);
+          await _storage.write(key: _nameKey, value: data['user']['nombre']);
 
           return data;
         } else {
@@ -183,6 +182,8 @@ class _DevHttpOverrides extends HttpOverrides {
 }
 
 class LoginPage extends StatefulWidget {
+  const LoginPage({super.key});
+
   @override
   _LoginPageState createState() => _LoginPageState();
 }
@@ -219,12 +220,10 @@ class _LoginPageState extends State<LoginPage> {
       });
 
       if (result != null) {
-        // Login exitoso, navegar a home
         Navigator.of(
           context,
         ).pushReplacement(MaterialPageRoute(builder: (context) => HomePage()));
       } else {
-        // Mostrar error más específico
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
             content: Text(
@@ -251,7 +250,6 @@ class _LoginPageState extends State<LoginPage> {
               child: Column(
                 mainAxisAlignment: MainAxisAlignment.center,
                 children: [
-                  // Logo o título
                   Icon(Icons.lock_outline, size: 80, color: Colors.blue),
                   SizedBox(height: 32),
                   Text(
@@ -368,6 +366,8 @@ class _LoginPageState extends State<LoginPage> {
 }
 
 class HomePage extends StatefulWidget {
+  const HomePage({super.key});
+
   @override
   _HomePageState createState() => _HomePageState();
 }

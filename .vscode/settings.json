@@ -1,3 +1,4 @@
 {
-    "java.configuration.updateBuildConfiguration": "interactive"
+    "java.configuration.updateBuildConfiguration": "interactive",
+    "cmake.sourceDirectory": "C:/Users/Herobrot/Documents/9Cuatri/Seguridad/corteDos/proyectos/criptografia/linux"
 }
